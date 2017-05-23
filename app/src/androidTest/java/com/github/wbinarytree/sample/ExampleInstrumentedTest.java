@@ -1,4 +1,4 @@
-package com.github.wbinarytree.mupdfview;
+package com.github.wbinarytree.sample;
 
 import android.content.Context;
 import android.support.test.InstrumentationRegistry;

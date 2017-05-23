@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:padding="1dp"
+        android:id="@+id/thumbnails_img"
+        android:layout_width="@dimen/bigThumbnailWidth"
+        android:layout_height="@dimen/bigThumbnailHeight"
+        />
+</LinearLayout>

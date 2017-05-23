@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="PdfView">
+        <attr format="boolean" name="showThumbnail"/>
+        <attr format="boolean" name="doublePage"/>
+    </declare-styleable>
+</resources>

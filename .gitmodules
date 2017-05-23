@@ -1,0 +1,3 @@
+[submodule "mupdf-android-viewer-mini"]
+	path = mupdf-android-viewer-mini
+	url = server:/mupdf-android-viewer-mini
