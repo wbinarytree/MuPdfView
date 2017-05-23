@@ -2,6 +2,13 @@
 
 Base on [MuPDF](https://mupdf.com/index.html) a custom view that simplify displaying Pdf files.
 
+ScreenShots:
+-----------
+
+![Demo1](https://github.com/wbinarytree/MuPdfView/blob/master/arts/demo.gif)
+
+![DoublePage](https://github.com/wbinarytree/MuPdfView/blob/master/arts/demo_landscape.gif)
+
 Basic usage:
 -----------
 
