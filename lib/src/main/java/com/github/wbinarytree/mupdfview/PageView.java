@@ -237,7 +237,7 @@ public class PageView extends FrameLayout {
             int i = canvasW / 6;
             scroller.forceFinished(true);
             boolean lastPage = !doublePage ? loader.getCurrentPage() == loader.getPageCount() - 1
-                : loader.getCurrentPage() <= getPageCount() - 2;
+                : loader.getCurrentPage() >= getPageCount() - 2;
             if (pX < -i && !lastPage) {
                 this.nextPage();
             } else if (pX > i && loader.getCurrentPage() != 0) {
