@@ -5,27 +5,31 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.support.v7.widget.RecyclerView;
 import android.util.SparseArray;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ProgressBar;
+
+import static android.graphics.PorterDuff.Mode.MULTIPLY;
+import static android.support.v7.appcompat.R.attr.progressBarStyle;
+import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 
 class InnerAdapter extends RecyclerView.Adapter<InnerAdapter.ThumbnailHolder> {
+
+    private static final int TYPE_BITMAP = 0x01;
+    private static final int TYPE_LOADING = 0x02;
 
     private ThumbnailViewAdapter adapter;
     private PdfLoader loader;
     private SparseArray<Bitmap> bitmapArray;
     private int selected = 0;
+    private boolean loading;
     private int start;
     private int end;
     private RecyclerView recyclerView;
-
-    InnerAdapter(ThumbnailViewAdapter adapter, SparseArray<Bitmap> bitmaps, PdfLoader loader) {
-        this.adapter = adapter;
-        this.bitmapArray = bitmaps;
-        this.loader = loader;
-        start = 0;
-        end = bitmaps.size();
-    }
+    private int count;
 
     InnerAdapter(ThumbnailViewAdapter adapter, SparseArray<Bitmap> bitmaps, PdfLoader loader,
         int start, int end, int selected) {
@@ -35,6 +39,7 @@ class InnerAdapter extends RecyclerView.Adapter<InnerAdapter.ThumbnailHolder> {
         this.start = start;
         this.end = end;
         this.selected = selected;
+        count = bitmaps.size();
     }
 
     public int getStart() {
@@ -57,6 +62,14 @@ class InnerAdapter extends RecyclerView.Adapter<InnerAdapter.ThumbnailHolder> {
         this.recyclerView = null;
     }
 
+    @Override
+    public int getItemViewType(int position) {
+        if (position == getItemCount() - 1 && loading) {
+            return TYPE_LOADING;
+        }
+        return super.getItemViewType(position);
+    }
+
     SparseArray<Bitmap> getBitmapArray() {
         return bitmapArray;
     }
@@ -68,19 +81,33 @@ class InnerAdapter extends RecyclerView.Adapter<InnerAdapter.ThumbnailHolder> {
             (ViewGroup) LayoutInflater.from(context).inflate(R.layout.pdf_view_item_holder, null);
 
         ThumbnailHolder thumbnailHolder = new ThumbnailHolder(root);
-        thumbnailHolder.v = adapter.onCreateViewHolder(context);
-        if (thumbnailHolder.v == null) {
-            throw new IllegalStateException("Do not receive thumbnail view");
+        if (viewType == TYPE_LOADING) {
+            ProgressBar progressBar = new ProgressBar(context, null, progressBarStyle);
+            FrameLayout.LayoutParams params =
+                new FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT);
+            params.gravity = Gravity.CENTER;
+            progressBar.getIndeterminateDrawable().setColorFilter(Color.WHITE, MULTIPLY);
+            progressBar.setLayoutParams(params);
+            thumbnailHolder.v = progressBar;
+            root.addView(thumbnailHolder.v);
+        } else {
+            thumbnailHolder.v = adapter.onCreateViewHolder(context);
+            if (thumbnailHolder.v == null) {
+                throw new IllegalStateException("Do not receive thumbnail view");
+            }
+            if (thumbnailHolder.v.getParent() != null) {
+                throw new IllegalStateException("View already have a parent");
+            }
+            root.addView(thumbnailHolder.v);
         }
-        if (thumbnailHolder.v.getParent() != null) {
-            throw new IllegalStateException("View already have a parent");
-        }
-        root.addView(thumbnailHolder.v);
         return thumbnailHolder;
     }
 
     @Override
     public void onBindViewHolder(final ThumbnailHolder holder, final int position) {
+        if (getItemViewType(position) == TYPE_LOADING && loading) {
+            return;
+        }
         final int index = start + position;
         final Bitmap thumbnail = bitmapArray.get(index);
 
@@ -114,26 +141,50 @@ class InnerAdapter extends RecyclerView.Adapter<InnerAdapter.ThumbnailHolder> {
 
     @Override
     public int getItemCount() {
-        return bitmapArray.size();
+        return count;
     }
 
+
+    public void startLoading() {
+        loading = true;
+        count++;
+        notifyItemInserted(count - 1);
+    }
+
+    public void hideLoading() {
+        loading = false;
+        count--;
+        notifyItemRemoved(count - 1);
+    }
+
+
     void addNext(SparseArray<Bitmap> bitmaps) {
+        hideLoading();
         int size = bitmaps.size();
         for (int i = 0 ; i < size ; i++) {
             this.bitmapArray.put(bitmaps.keyAt(i), bitmaps.valueAt(i));
         }
+        count += size;
         notifyItemRangeInserted(end, size);
         end += size;
     }
 
     void addPrevious(SparseArray<Bitmap> bitmaps) {
+        hideLoading();
         int size = bitmaps.size();
         for (int i = 0 ; i < size ; i++) {
             this.bitmapArray.put(bitmaps.keyAt(i), bitmaps.valueAt(i));
         }
+
+        count += size;
         notifyItemRangeInserted(0, size);
         start -= size;
     }
+
+    public void setAdapter(ThumbnailViewAdapter adapter) {
+        this.adapter = adapter;
+    }
+
 
     static class ThumbnailHolder extends RecyclerView.ViewHolder {
         View v;

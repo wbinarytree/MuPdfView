@@ -2,7 +2,7 @@
 apply plugin: 'com.android.library'
 apply plugin: 'com.github.dcendents.android-maven'
 apply plugin: 'com.jfrog.bintray'
-version = '0.1.1'
+version = '0.1.3'
 
 android {
     compileSdkVersion 25
@@ -26,6 +26,9 @@ android {
         main {
             java {
                 srcDirs = [ "src/main/java", "../mupdf-android-viewer-mini/libmupdf/platform/java/src" ]
+            }
+            jniLibs{
+                srcDirs = ["../mupdf/src/main/jniLibs"]
             }
         }
     }

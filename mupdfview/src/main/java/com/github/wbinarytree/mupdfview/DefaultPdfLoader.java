@@ -12,7 +12,10 @@ import com.artifex.mupdf.fitz.Matrix;
 import com.artifex.mupdf.fitz.Page;
 import com.artifex.mupdf.fitz.Rect;
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice;
+import java.lang.ref.WeakReference;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static com.github.wbinarytree.mupdfview.ViewWorker.*;
 
 /**
  * Created by yaoda on 03/05/17.
@@ -37,7 +40,6 @@ class DefaultPdfLoader extends PdfLoader {
     private float layoutW, layoutH, layoutEm;
     private boolean hasLoaded;
     private LruCache<Integer, PdfPage> pdfCache;
-    private LruCache<Integer, Page> pageCache;
     private boolean wentBack = false;
     private boolean doublePage;
 
@@ -46,8 +48,14 @@ class DefaultPdfLoader extends PdfLoader {
         this.pageView = pageView;
         worker = new ViewWorker();
         hasLoaded = false;
-        pdfCache = new LruCache<>(DEFAULT_BUFFER_SIZE);
-        pageCache = new LruCache<>(DEFAULT_BUFFER_SIZE);
+        pdfCache = new LruCache<Integer, PdfPage>(DEFAULT_BUFFER_SIZE) {
+            @Override
+            protected void entryRemoved(boolean evicted, Integer key, PdfPage oldValue,
+                PdfPage newValue) {
+                super.entryRemoved(evicted, key, oldValue, newValue);
+                oldValue.bitmap.recycle();
+            }
+        };
     }
 
     @Override
@@ -66,26 +74,25 @@ class DefaultPdfLoader extends PdfLoader {
 
     @Override
     void loadPdf(String path) {
-        if (!path.equals(this.path)) {
-            this.path = path;
+        this.path = path;
+        if (worker.isWorking()) {
             clearCache();
-        }
-        if (!worker.isWorking()) {
+        } else {
             worker.start();
         }
         this.listener = pageView.getListener();
-
         openDocument();
     }
 
     private void openDocument() {
-        worker.addTask(new ViewWorker.Task() {
+        worker.addTask(new Task() {
             boolean success = true;
 
             @Override
             public void work() {
                 if (doc != null) {
                     doc.destroy();
+                    doc = null;
                 }
                 try {
                     doc = Document.openDocument(path);
@@ -106,7 +113,7 @@ class DefaultPdfLoader extends PdfLoader {
     }
 
     private void loadDocument() {
-        worker.addTask(new ViewWorker.Task() {
+        worker.addTask(new Task() {
             @Override
             public void work() {
                 if (doc == null) return;
@@ -143,18 +150,14 @@ class DefaultPdfLoader extends PdfLoader {
 
     private void loadThumbnails() {
         if (thumbnailView != null) {
-            worker.addTask(new ViewWorker.Task() {
+            worker.addTask(new Task() {
                 int start = pageCount > MAX_COUNT ? currentPage : 0;
                 SparseArray<Bitmap> bitmaps = new SparseArray<>(pageCount);
 
                 @Override
                 public void work() {
                     for (int i = start ; i < thumbnailCount ; i++) {
-                        Page page = pageCache.get(i);
-                        if (page == null) {
-                            page = doc.loadPage(i);
-                            pageCache.put(i, page);
-                        }
+                        Page page = doc.loadPage(i);
                         Matrix ctm = AndroidDrawDevice.fitPageWidth(page, canvasW / 12);
                         Bitmap bitmap = AndroidDrawDevice.drawPage(page, ctm);
                         bitmaps.put(i, bitmap);
@@ -191,8 +194,8 @@ class DefaultPdfLoader extends PdfLoader {
         super.setAdapter(adapter);
         if (this.thumbnailView != null && this.thumbnailView.getAdapter() != null) {
             InnerAdapter current = (InnerAdapter) thumbnailView.getAdapter();
-            InnerAdapter newInner = new InnerAdapter(this.adapter, current.getBitmapArray(), this);
-            thumbnailView.setAdapter(newInner);
+            current.setAdapter(adapter);
+            current.notifyDataSetChanged();
         }
     }
 
@@ -203,7 +206,7 @@ class DefaultPdfLoader extends PdfLoader {
 
     private void loadPage() {
         final int pageNumber = currentPage;
-        ViewWorker.Task task = new LoadPageTask(pageNumber);
+        Task task = new LoadPageTask(pageNumber);
         worker.addTask(task);
     }
 
@@ -269,9 +272,13 @@ class DefaultPdfLoader extends PdfLoader {
     }
 
     private void clearCache() {
+        if (worker.isWorking()) worker.restart();
+        hasLoaded = false;
         if (pdfCache != null) pdfCache.evictAll();
-        if (pageCache != null) pageCache.evictAll();
-        if (thumbnailView != null) thumbnailView.setAdapter(null);
+        if (thumbnailView != null) {
+            thumbnailView.setAdapter(null);
+            thumbnailView.clearOnScrollListeners();
+        }
     }
 
     @Override
@@ -281,17 +288,16 @@ class DefaultPdfLoader extends PdfLoader {
             pageView.setCurrentSearch(null);
             return;
         }
-        Page page = pageCache.get(currentPage);
-        if (page == null) {
-            page = doc.loadPage(currentPage);
-            if (page == null) {
-                throw new IllegalStateException("Can not load page : " + currentPage);
+        Rect[] search;
+        try {
+            Page page = doc.loadPage(currentPage);
+            Matrix ctm = AndroidDrawDevice.fitPageWidth(page, canvasW);
+            search = page.search(words);
+            for (Rect rect : search) {
+                rect.transform(ctm);
             }
-        }
-        Matrix ctm = AndroidDrawDevice.fitPageWidth(page, canvasW);
-        Rect[] search = page.search(words);
-        for (Rect rect : search) {
-            rect.transform(ctm);
+        } catch (Exception e) {
+            search = null;
         }
         pageView.setCurrentSearch(search);
     }
@@ -327,8 +333,7 @@ class DefaultPdfLoader extends PdfLoader {
         PdfPage pdfPage = pdfCache.get(pageNumber);
         if (pdfPage == null) {
             try {
-                Page page = pageCache.get(pageNumber);
-                if (page == null) page = doc.loadPage(pageNumber);
+                Page page = doc.loadPage(pageNumber);
                 Matrix ctm = AndroidDrawDevice.fitPageWidth(page, size);
                 Bitmap bitmap = AndroidDrawDevice.drawPage(page, ctm);
                 Link[] links = page.getLinks();
@@ -338,8 +343,7 @@ class DefaultPdfLoader extends PdfLoader {
                 }
                 pdfPage = new PdfPage(bitmap, links);
                 pdfCache.put(pageNumber, pdfPage);
-                pageCache.put(pageNumber, page);
-            } catch (Exception e) {
+            } catch (RuntimeException e) {
                 e.printStackTrace();
                 pdfPage = PdfPage.empty();
             }
@@ -349,7 +353,7 @@ class DefaultPdfLoader extends PdfLoader {
 
     private void loadNextThumbnails(final AtomicBoolean loaded, final int end) {
         if (thumbnailView != null) {
-            worker.addTask(new ViewWorker.Task() {
+            worker.addTask(new Task() {
 
                 SparseArray<Bitmap> bitmaps = new SparseArray<>(MAX_COUNT);
 
@@ -358,11 +362,7 @@ class DefaultPdfLoader extends PdfLoader {
 
                     for (int i = end ; i < end + MAX_COUNT ; i++) {
                         if (i >= pageCount) return;
-                        Page page = pageCache.get(i);
-                        if (page == null) {
-                            page = doc.loadPage(i);
-                            pageCache.put(i, page);
-                        }
+                        Page page = doc.loadPage(i);
                         Matrix ctm = AndroidDrawDevice.fitPageWidth(page, canvasW / 12);
                         Bitmap bitmap = AndroidDrawDevice.drawPage(page, ctm);
 
@@ -373,6 +373,10 @@ class DefaultPdfLoader extends PdfLoader {
                 @Override
                 public void run() {
                     InnerAdapter adapter = (InnerAdapter) thumbnailView.getAdapter();
+                    if (adapter == null) {
+                        loaded.compareAndSet(false, true);
+                        return;
+                    }
                     adapter.addNext(bitmaps);
                     thumbnailCount += bitmaps.size();
                     loaded.compareAndSet(false, true);
@@ -383,7 +387,7 @@ class DefaultPdfLoader extends PdfLoader {
 
     private void loadPreviousThumbnails(final AtomicBoolean loaded, final int start) {
         if (thumbnailView != null) {
-            worker.addTask(new ViewWorker.Task() {
+            worker.addTask(new Task() {
 
                 SparseArray<Bitmap> bitmaps = new SparseArray<>(MAX_COUNT);
 
@@ -393,11 +397,7 @@ class DefaultPdfLoader extends PdfLoader {
                     int from = start - MAX_COUNT < 0 ? 0 : start - MAX_COUNT;
                     for (int i = from ; i < start ; i++) {
                         if (i >= pageCount) return;
-                        Page page = pageCache.get(i);
-                        if (page == null) {
-                            page = doc.loadPage(i);
-                            pageCache.put(i, page);
-                        }
+                        Page page = doc.loadPage(i);
                         Matrix ctm = AndroidDrawDevice.fitPageWidth(page, canvasW / 12);
                         Bitmap bitmap = AndroidDrawDevice.drawPage(page, ctm);
                         bitmaps.put(i, bitmap);
@@ -422,7 +422,7 @@ class DefaultPdfLoader extends PdfLoader {
             return;
         }
 
-        worker.addTask(new ViewWorker.Task() {
+        worker.addTask(new Task() {
             PdfPage pdfPage;
 
             @Override
@@ -449,7 +449,7 @@ class DefaultPdfLoader extends PdfLoader {
             pageView.setNext(null);
             return;
         }
-        worker.addTask(new ViewWorker.Task() {
+        worker.addTask(new Task() {
             PdfPage pdfPage;
 
             @Override
@@ -476,7 +476,7 @@ class DefaultPdfLoader extends PdfLoader {
 
     private static class LazyLoadListener extends RecyclerView.OnScrollListener {
 
-        private final DefaultPdfLoader loader;
+        private final WeakReference<DefaultPdfLoader> loader;
         private final int pageCount;
         private RecyclerView.LayoutManager manager;
         private int first;
@@ -484,9 +484,11 @@ class DefaultPdfLoader extends PdfLoader {
         private volatile AtomicBoolean loadedPre;
         private volatile AtomicBoolean loadedNext;
         private int start, end;
+        private InnerAdapter adapter;
+
 
         LazyLoadListener(DefaultPdfLoader loader, int pageCount) {
-            this.loader = loader;
+            this.loader = new WeakReference<>(loader);
             this.pageCount = pageCount;
             loadedPre = new AtomicBoolean(true);
             loadedNext = new AtomicBoolean(true);
@@ -496,7 +498,7 @@ class DefaultPdfLoader extends PdfLoader {
         public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
             super.onScrolled(recyclerView, dx, dy);
             manager = recyclerView.getLayoutManager();
-            InnerAdapter adapter = (InnerAdapter) recyclerView.getAdapter();
+            adapter = (InnerAdapter) recyclerView.getAdapter();
             start = adapter.getStart();
             end = adapter.getEnd();
 
@@ -515,25 +517,37 @@ class DefaultPdfLoader extends PdfLoader {
             }
 
             if (loadedNext.get() && last < pageCount && end != pageCount && dx >= 0) {
+                recyclerView.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        adapter.startLoading();
+                    }
+                });
                 onLoadNext();
             }
             if (loadedPre.get() && first <= 1 && start != 0 && dx <= 0) {
+                recyclerView.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        adapter.startLoading();
+                    }
+                });
                 onLoadPrevious();
             }
         }
 
         private void onLoadPrevious() {
             loadedPre.compareAndSet(true, false);
-            loader.loadPreviousThumbnails(loadedPre, start);
+            loader.get().loadPreviousThumbnails(loadedPre, start);
         }
 
         private void onLoadNext() {
             loadedNext.compareAndSet(true, false);
-            loader.loadNextThumbnails(loadedNext, end);
+            loader.get().loadNextThumbnails(loadedNext, end);
         }
     }
 
-    private class LoadPageTask implements ViewWorker.Task {
+    private class LoadPageTask extends Task {
         private final int pageNumber;
         PdfPage pdfPage;
 

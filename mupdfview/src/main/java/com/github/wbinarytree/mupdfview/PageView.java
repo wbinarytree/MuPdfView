@@ -522,18 +522,23 @@ public class PageView extends FrameLayout {
 
     public void loadPdfWithPage(String path, int num) {
         loading = true;
+        this.next = null;
+        this.previous = null;
+        this.bitmap = null;
         invalidate();
-        if (loader == null) {
-            DisplayMetrics metrics = new DisplayMetrics();
-            ((Activity) getContext()).getWindowManager().getDefaultDisplay().getMetrics(metrics);
-            loader = new DefaultPdfLoader(metrics.densityDpi, this);
-            loader.onPageViewSizeChanged(canvasW, canvasH);
+        if (loader != null) {
+            loader.finish();
         }
+        DisplayMetrics metrics = new DisplayMetrics();
+        ((Activity) getContext()).getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        loader = new DefaultPdfLoader(metrics.densityDpi, this);
+        loader.onPageViewSizeChanged(canvasW, canvasH);
         loader.setThumbnailView(thumbnailView);
         loader.setAdapter(adapter);
         loader.setDoublePage(doublePage);
         loader.loadPdfWithPage(path, num);
     }
+
 
     public void loadPdf(String path) {
         this.loadPdfWithPage(path, 0);

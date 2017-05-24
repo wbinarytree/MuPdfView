@@ -12,9 +12,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ViewWorker implements Runnable {
 
+    private final LinkedBlockingQueue<Task> queue;
     private Handler handler;
     private AtomicBoolean alive = new AtomicBoolean();
-    private LinkedBlockingQueue<Task> queue;
 
     public ViewWorker() {
         handler = new Handler(Looper.getMainLooper());
@@ -27,14 +27,30 @@ public class ViewWorker implements Runnable {
 
     public void stop() {
         alive.compareAndSet(true, false);
-        queue.clear();
+        clear();
         handler = null;
     }
 
+    public void restart() {
+        clear();
+    }
+
+    private void clear() {
+        synchronized (queue) {
+            while (!queue.isEmpty()) {
+                Task task = queue.peek();
+                if (task != null) {
+                    task.stop();
+                    queue.remove(task);
+                }
+            }
+        }
+    }
+
     public void start() {
-        if(alive.compareAndSet(false, true)){
+        if (alive.compareAndSet(false, true)) {
             new Thread(this).start();
-        }else {
+        } else {
             throw new IllegalStateException("Worker already started");
         }
     }
@@ -51,16 +67,39 @@ public class ViewWorker implements Runnable {
     public void run() {
         while (alive.get()) {
             try {
-                Task task = queue.take();
-                task.work();
-                runOnUiThread(task);
+                Task task = queue.peek();
+                if (task == null) continue;
+                task.startWorking();
+                if (task.isWorking()) {
+                    task.work();
+                }
+                if (task.isWorking()) {
+                    runOnUiThread(task);
+                }
+                queue.remove(task);
             } catch (Throwable x) {
                 Log.e("ViewWorker", x.getMessage());
             }
         }
     }
 
-    interface Task extends Runnable {
-        void work();
+    abstract static class Task implements Runnable {
+        private AtomicBoolean working = new AtomicBoolean();
+
+        abstract void work();
+
+        final void startWorking() {
+            if (!this.working.compareAndSet(false, true)) {
+                throw new IllegalStateException("Task already started");
+            }
+        }
+
+        final boolean isWorking() {
+            return working.get();
+        }
+
+        final void stop() {
+            this.working.set(false);
+        }
     }
 }
